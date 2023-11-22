@@ -1,0 +1,657 @@
+---
+title: "Forecasting Report"
+author: "S'khumbuzo Ngema - 45416850"
+date: "2023-10-16"
+output:
+  pdf_document: 
+    latex_engine: xelatex
+    fig_caption: yes
+    toc: yes
+    number_sections: yes
+    citation_package: natbib
+    fig_width: 5
+    fig_height: 4
+  html_document:
+    toc: yes
+    number_sections: yes
+bibliography: sample.bib
+link-citations: true
+includes:
+      in_header: "preamble.tex"  # Optionally include the LaTeX preamble
+header-includes:
+  - "\\usepackage{float}"  # Add the float package
+---
+
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+\newpage
+# Introduction 1
+Forecasting is predicting the future based on past and present events [@JeffSchmidt_forecasting_2023]. It helps firms to make decisions based on historical data and patterns to manage future uncertainty. It is a planning tool that helps organisations to plan their future steps and set budgets to address any risks [@JeffSchmidt_forecasting_2023]. The Monthly Retail Trade Survey (MRTS) and the Advance Monthly Retail Trade Survey (MARTS), which are administered by the Census Bureau, furnish approximations of quarterly e-commerce sales, end-of-month merchandise inventories, and monthly retail sales for companies in the United States that are classified according to the North American Industry Classification System (NAICS) Retail Trade or Food Services sectors [@AEA_monthly_2023]. Retail businesses often rely on accurate sales forecasts to optimise inventory levels, plan marketing strategies, and make informed business decisions. In this report, we present an analysis of monthly sales data from a retail/grocery store over 13 years. The primary objective is to develop a robust time series forecasting model for sales prediction. We are going to use the Regression model, Decomposition model, and ARIMA model.
+
+
+# Data Set Presentation
+## Data description
+### Definitions of Variables
+We will use data obtained from the US Census advance monthly for retail and food services. Data was accessed using https://www.census.gov/econ/currentdata/?programCode=MARTS. Data contains monthly sales from January 2010 to December 2022, totalling to 156 observations. I have chosen Grocery Stores (4451) Not seasonal monthly adjusted data set in my report. Before analysis, the data underwent a preliminary process to handle the missing values and outliers. The dataset has two columns Period and Value. It was determined that there was no missing variable and only one outlier was identified through the analysis of the box plot in Fig.1. The decision was made to retain the outlier in the analysis since sales exhibited a notable increase in December compared to the preceding months. Exclusion of the outlier was deemed likely to result in a less accurate prediction. 
+
+```{r loading, include=FALSE}
+library(fpp3)
+library(fpp2)
+library(expsmooth)
+library(readr)
+library(slider)
+library(forecast)
+library(TTR)
+library(ARIMAANN)
+library(latex2exp)
+library(rticles)
+library(lubridate)
+library(openxlsx)
+library(readxl)
+library(knitr)
+library(extrafont)
+library(latexpdf)
+library(tinytex)
+library(zoo)
+library(latex2exp)
+library(labeling)
+library(geometry)
+```
+
+
+```{r loading data, echo=FALSE}
+ 
+df <- read_excel("C:\\Users\\JJ Moolman\\Documents\\kazi\\SeriesReport-202310160549-V (1).xlsx", sheet = 1, skip = 7)
+
+```
+
+```{r vis, echo=FALSE, include=FALSE}
+opts_chunk$set(out.width = "50%")
+knitr::kable(head(df), caption = "Retail sales data")
+```
+
+```{r Date conversion and renaming columns, echo=FALSE}
+df$Date <- as.Date(paste0("01-", df$Period), format = "%d-%b-%Y")
+new_df <- df[, c(3, 2)]
+# change variable names
+colnames(new_df)[1:2] <- c("Months", "Sales")
+knitr::kable(head(new_df,5), caption = "Converted data head")
+```
+After changing the columns and converting the dates in our dataset, the top five observations are shown in Table 1.
+\newpage
+
+### Data cleaning
+```{r Handling missing value, echo=FALSE, include=FALSE}
+# Check for missing values
+sum(is.na(df))
+```
+
+
+After data cleaning we discovered that there were no missing values.
+
+
+```{r boxplot,out.width= '60%', out.height= '40%', fig.cap= "Box Plot", echo=FALSE, fig.pos='ht'}
+boxplot(df$Value, main = "Box Plot of Grocery Sales", xlab = "X-Axis Label", col = "green")
+
+```
+
+The box plot in Figure 1 reveals the presence of an outlier, which will be retained in order to ensure the accuracy and reliability of our prediction.
+
+
+```{r summary,echo=FALSE, include=FALSE}
+knitr::kable(summary(new_df), caption = "Data summary")
+```
+
+## Plot
+```{r autoplot, fig.align = 'center', message=FALSE, echo=FALSE, fig.cap='Time series plot', out.width= '60%', out.height= '32%'}
+new_df_ts <- new_df|>
+  mutate(Quarter =yearquarter(Months))|>
+  as_tsibble(index = Months)
+autoplot(new_df_ts, Sales) + ggtitle("Grocery Sales with trend line fitted") +
+  geom_smooth(method = "lm", se = FALSE)
+```
+
+
+In Figure 2, it is observed that the Sales show an upward trend starting from 2010, with an initial count of approximately 44,000 sales. Throughout the observed period, there are instances of fluctuation, but a significant surge is evident at the onset of 2020.
+
+
+## Trend 
+
+```{r moving average, warning=FALSE, fig.align = 'center', echo=FALSE, fig.cap=' Grocery sales (black) along with 5-MA estimate of the trend cycle (red)', out.width= '60%', out.height= '33%'}
+new_df_ts <- new_df_ts %>%
+  mutate(SMA_5 = slider::slide_dbl(Sales, mean, .before = 2, .after = 2, .complete = TRUE))
+
+autoplot(new_df_ts, Sales) + 
+  geom_line(aes(y = SMA_5), color = "red") + 
+  ggtitle("Grocery Sales with 5-Period SMA")
+```
+
+The red trend cycle in Figure 3 is smoother than the raw data, capturing the essential flow of the time series but leaving out the noise.
+
+## Seasonality
+
+```{r gg_season, fig.align = 'center',echo=FALSE, fig.cap='Time series seasonal plot', out.width= '60%', out.height= '33%'}
+new_df_ts <- new_df|>
+  mutate(Months =yearmonth(Months))|>
+  as_tsibble(index = Months)
+gg_season(new_df_ts, Sales, labels = 'both') + ggtitle("Grocery Sales Seasonal plot")
+```
+
+
+
+From the seasonal plot in Figure 4, we can see that sales consistently fall in February, begin to rise in March, fluctuate throughout the rest of the year (falling again in September) and peak in December. In an out-of-the-ordinary turn of events for the year 2020, we saw a meteoric climb from 55,000 in February to 73,000 in March. People probably spent more money on groceries after learning that a lockdown would be instituted because of the COVID-19 pandemic, but the data source doesn't allow us to know which products were sold or which companies were selling them.
+
+
+
+
+
+```{r gg_subseries, fig.align = 'center',echo=FALSE, fig.cap='Seasonal Subseries plot', out.width= '60%', out.height= '40%'}
+#Plot time series 
+new_df_ts <- new_df|>
+  mutate(Months =yearmonth(Months))|>
+  as_tsibble(index = Months)
+gg_subseries(new_df_ts, Sales) + ggtitle("Grocery Sales ggsubseries")
+```
+
+
+In looking at the monthly averages for 2010, 2015, and 2020 in Figure 5, we found that the lowest monthly mean was in February, when it dropped below 50,000, while the highest monthly mean was approximated to 59,500 in December. However, this number stays around 55,000 annually.
+
+# Regression model
+
+By using a series of predictive explanatory variables $x_1$, $x_2$, ..$x_k$ based on a theoretical or empirical idea, regression analysis is a statistical approach for evaluating the association between one dependent variable $Y$ [@Encyclopedia_regression_2023]. 
+
+## Linear regression
+
+### Variable vs time
+In the simple regression model, $y$, the dependent variable, is linearly related to $x$, the independent variable. The model is given by the following equation:   
+\begin{equation} 
+  y_t = \beta_0 + \beta_1 x_t + \epsilon_t
+  \label{eq:einstein}
+\end{equation} 
+
+ 
+Where:
+
+- \(y_t\) is the dependent variable.
+
+- \(\beta_0\) is the intercept.
+
+- \(\beta_1\) is the coefficient for the independent variable \(x_t\).
+
+- \(x_t\) is the independent variable.
+
+- \(\epsilon_t\) represents the error term.
+
+
+```{r liear equation with regressin line, warning=FALSE, fig.align = 'center', out.width= '60%', out.height= '50%', message=FALSE, echo=FALSE, fig.cap='Scatterplot of Grocery Sales and Monthts and a fitted Linear regression line'}
+new_df_ts |>
+  ggplot(aes(x = Months, y = Sales)) +
+  labs(y = " Grocery Monthly Sales",
+       x = "Months") +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE)
+```
+The scatter plot illustrates the temporal distribution of monthly Grocery Sales, wherein the sales volume is contingent upon the passage of time. A positive correlation is observed between sales and months, indicating that sales similarly present an upward trend as the duration of time progresses. To estimate the average monthly change in grocery sales and to analyse the general trend in the data over time, we fitted a regression line in our scatter plot. Using our regression line, we can now estimate the rate of growth in sales. 
+
+### Model
+
+```{r fitted, echo=FALSE}
+
+lin_mod<- new_df_ts|>
+  model(TSLM(Sales ~ Months))
+```
+
+We are going to use a TSLM model to model the relationship between a dependent variable (Sales) and independent variable (Months). It will be used to estimate the coefficients of the linear equation. 
+
+```{r report of linear model, echo=FALSE, fig.cap='Linear regression report', out.height='40%', out.width='60%'}
+report(lin_mod)
+```
+
+
+We can write the estimated regression line found using TSLM() function as:
+
+
+
+\begin{equation} 
+  \hat{y_t} = -4.411e+04 + 5.806e+00x_t
+  \label{eq:reg}
+\end{equation}
+
+### Significance test
+The Intercept in the model is estimated to be -4.411e+04, with a standard error of 3.034e+03. The t-value for the Intercept is -14.54, and the p-value  is less than 2e-16, suggesting that the Intercept indicates statistical significance. This implies that there exists significance evidence indicating a considerable deviation of the sales value from zero in instances where the predictor variable, Months, assumes a value of zero.
+
+The coefficient estimate for the Months variable is 5.806e+00, and it has a corresponding standard error of 1.782e-01. The t-value for the variable "Months" is 32.57, and the p-value is less than 2e-16, suggesting a high level of statistical significance. This implies that there exists a notable and favourable correlation between the variable representing the duration in months and the resulting sales outcome.
+
+### Residuals
+
+```{r residuals,out.height='40%',  echo=FALSE, fig.cap='Linear regression residuals'}
+residuals(lin_mod)
+```
+
+```{r residuals plot, echo=FALSE, fig.cap='Linear regression resiuals plot', out.height='40%', out.width='60%'}
+lin_mod|> gg_tsresiduals()
+```
+\newpage 
+
+From Figure 7 we notice that there is a spike in the beginning of 2020 of above 10000, while in the beginning of 2010 until 2018 we notice that the range was between -5000 and 5000 and towards 2020 we notice that it was between 0 and -5000. 
+
+## Non linear regression
+Estimating a regression model for a nonlinear connection requires only a transformation of the forecast variable $y$ and the predictor variable $x$. The model is linear in its parameters despite the fact that this is a non-linear functional form. The logarithm is by far the most popular transform. It is possible to define a log-log functional form as:
+
+\begin{equation}
+\log y = \beta_0 + \beta_1 \log x + \varepsilon
+\end{equation}
+where:
+
+- $y$is the dependent variable.
+
+- $x$ is the independent variable.
+
+- $\log y$ represents the natural logarithm of the dependent variable $y$.
+
+- $\log x$ represents the natural logarithm of the independent variable $x$.
+
+- $\beta_0$ is the intercept.
+
+- $\beta_1$ is the coefficient of the independent variable $\log x$. 
+- $\varepsilon$ represents the error term.
+
+### Model
+After a linear regression model has been identified, a nonlinear regression model will be employed, and the goodness of fit will be evaluated.  
+
+```{r Non Linear regression model, out.height='40%', out.width='60%', fig.cap='Non linear regression', echo=FALSE}
+enye <- new_df_ts|>
+  model(TSLM(log(Sales) ~ trend()+season()))
+report(enye)
+```
+
+We can notice that Natural logarithm (log(Sales)) transformation of the dependent variable (sales) has been used to enhance model fit. You may learn more about how the independent variables affect the transformed sales with the help of the estimated coefficients.
+When all other independent variables are set to zero, the expected log sales are represented by the Intercept term (estimated to be 10.64). There is a positive linear relationship between time and log sales, as indicated by the trend() variable's positive coefficient estimate (0.00316).
+
+
+### Residuals 
+
+```{r Non linear regression, fig.cap='Non linear regression residuals', out.height='40%', out.width='60%', echo=FALSE}
+gg_tsresiduals(enye)
+```
+
+
+Errors (differences between observed and forecasted log sales values) and their distribution are detailed in the Residuals. The distribution and range of the residuals are displayed by the Min, 1Q, Median, 3Q, and Max values. The average magnitude of the residuals is shown by the Residual standard error (0.03478).
+According to the Multiple R-squared value (0.9512), the independent variables in the model account for 95.12% of the total variance in log sales. The number of independent variables was taken into account to arrive at the Adjusted R-squared value (0.9471).
+
+
+### Significance test
+
+Time of year is represented via the season() variables. The estimated coefficient for each season() variable shows how that season compares to a reference season in terms of log sales. Some seasons (like season()year2 and season()year12) appear to have a statistically significant effect on log sales. The statistical significance of each variable is shown by its corresponding p-value in the coefficient estimates. * for $p<0.05$, * for $p< 0.01$, and ** for $p< 0.001$ are the conventional symbols for these significance levels.  Overall, the model appears to be statistically significant, as indicated by the F-statistic (223.0) and corresponding $p<2.22e-16$.
+
+  
+
+### Forecast
+
+In Figure 9, we splitted our data into training and testing so that we can forecast for 3 years from 2020 to 2022 using non-linear regression model (exponential), piecewise, and linear regression model.. 
+
+
+\newpage
+```{r ,fig.cap='Forecast of regression models', out.width='70%', out.height='50%', warning=FALSE, echo=FALSE}
+
+fit_trends <- new_df_ts |>
+  model(
+    linear = TSLM(Sales ~ trend()),
+    exponential = TSLM(log(Sales) ~ trend()),
+    piecewise = TSLM(Sales ~ trend(knots = c(2020, 2022)))
+  )
+fc_trends <- fit_trends |> forecast(h = 3)
+
+new_df_ts |>
+  autoplot(Sales) +
+  geom_line(data = fitted(fit_trends),
+            aes(y = .fitted, colour = .model)) +
+  autolayer(fc_trends, alpha = 0.5, level = 95) +
+  labs(y = "Minutes",
+       title = "Boston marathon winning times")
+
+
+```
+Fitted lines and predictions from linear, exponential, and piecewise linear trends are displayed in Figure 9 The piecewise linear trend seems to provide the most reliable predictions.
+
+
+
+# Decomposition 
+
+Time series data may manifest diverse patterns; therefore, it is frequently advantageous to decompose a time series into multiple components, with each component symbolising an underlying pattern category.
+
+## Boxcox transformation
+
+It is a typical technique for making data sets with non-normal distributions more regularly distributed. The goal behind this technique is to use the following formula to determine a value for $\lambda$ such that the modified data is as close to normally distributed as possible [@zach_how_2020]. The following defines the set of logarithmic and power transformations, which are dependent on the parameter $\lambda$.
+\begin{equation}
+w_t =
+\begin{cases}
+  \log(y_t) & \text{if } \lambda = 0 \\
+  (\text{sign}(y_t) |y_t|^{\lambda} - 1) \lambda & \text{otherwise}
+\end{cases}
+\end{equation}
+
+
+
+
+```{r Box Cox transformation, fig.align = 'center', echo=FALSE, out.width= '60%', out.height= '40%'}
+new_df1 <- new_df_ts
+lambda <- new_df1 |>
+  features(Sales, features = guerrero) |>
+  pull(lambda_guerrero)
+new_df1 |>
+  autoplot(box_cox(Sales, lambda)) +
+  labs(y = "",
+       title = latex2exp::TeX(paste0(
+         "Boxcox transformation of Grocery Sales with $\\lambda$ = ",
+         round(lambda,2))))
+```
+
+
+For the Grocery sales from retail monthly sales, a Box-Cox transformation with $\lambda = -0,9$ will be applied. 
+
+
+
+
+##Decomposition types
+
+### Classical decomposition
+
+The approach is considered to be reasonably straightforward and serves as the foundational step for many other time series decomposition methods. There exist two distinct forms of classical decomposition, namely an additive decomposition and a multiplicative decomposition. In the context of classical decomposition, it is believed that the seasonal component remains constant across successive years.
+
+### (a) Additive decomposition
+
+We can calculate the trend-cycle \( \hat{T}_t \) using \(2 \times m\)-MA and \(m\)-MA if \(m\) is even and if \(m\) is odd, respectively. To calculate the detrended series, we will use \(y_t - \hat{T}_t\). Simply averaging the seasonal detrended values is all that is needed for estimating the seasonal component for each season. Stringing together these monthly values yields the seasonal component, and recreating the sequence across years of data yields \( \hat{S}_t \). Subtracting these estimated seasonal and trend-cycle components yields the residual component:
+\begin{equation}
+\hat{R}_t = y_t - \hat{T}_t - \hat{S}_t
+\end{equation}
+
+
+
+```{r additive, warning=FALSE, fig.align = 'center', echo=FALSE, out.width= '80%', out.height= '40%'}
+new_df_ts |>
+  model(classical_decomposition(Sales, type = "additive")) |>
+  components() |>
+  autoplot() +
+  labs(title = "Classical Additive decomposition of Grocery Sales")
+```
+### (b) Multiplicative decomposition
+
+The remainder component in multiplicative form is given by: .
+
+\begin{equation}
+\hat{R}_t = \frac{y_t}{(\hat{T}_t \times \hat{S}_t)}
+\end{equation}
+```{r multiplicative, warning=FALSE, fig.align = 'center', echo=FALSE, out.width= '80%', out.height= '40%'}
+
+new_df_ts |>
+  model(
+    classical_decomposition(Sales, type = "multiplicative")
+  ) |>
+  components() |>
+  autoplot() +
+  labs(title = "Classical Multiplicative decomposition of Grocery Sales")
+```
+
+### (c) STL decomposition
+STL is equipped to deal with any kind of seasonality. The seasonal component is allowed to vary over time, with the rate of variation and trend-cycle smoothness both under the forecaster's control. 
+
+
+```{r STL decomposition, fig.align = 'center', echo=FALSE, out.width= '80%', out.height= '40%', fig.cap='STL Decomposition'}
+
+new_df_ts|>
+  model(STL(Sales ~ trend(window = 4) +
+              season(window = "periodic"),
+            robust = TRUE)) |>
+  components() |>
+  autoplot()
+
+```
+
+There are three parts to the data, with irregular being the forth. With the exception of outliers observed in the beginning of 2020 and towards the end of 2022, we observe irregularities ranges between -2000 and 2000. There is a spike in the begininng of 2020 that is shown by trend and we believe that is because people bought more grocery since they knew that lock was to be introduced.
+
+\newpage
+### Seasonal adjust using STL
+```{r seasona adjust,warning=FALSE, fig.align = 'center', echo=FALSE, out.width= '60%', out.height= '40%', fig.cap='Seasonal  adjusted plot'}
+  new_df_stl <- new_df_ts %>% 
+  model(STL(Sales)) %>%
+  components()
+ new_df_stl %>%
+  as_tsibble() %>%
+  autoplot(season_adjust, level = NULL) +
+  labs(title = "Grocery Sales ") 
+```
+
+
+
+
+## Exponential smoothing
+Exponential smoothing approaches use weighted averages of historical observations to generate predictions, with the weights falling exponentially with the age of the observations. We have a number of exponential smoothing methods but we are going to only four in this report ETS(A,A,N), ETS(A,N,N), additive damped trend, Holt's linear method. 
+
+### ETS(A,N,N)
+
+```{r Forecast plot, warning=FALSE, fig.align = 'center', echo=FALSE, out.width= '80%', out.height= '60%'}
+forecast_ANN <- new_df_ts|>
+    model(ETS(Sales ~ error ("A") + trend("N") + season("N")))
+forecast1 <- forecast_ANN |>
+ report()
+```
+
+
+### ETS(A,A,N)
+
+```{r RMSE AAN, warning=FALSE, fig.align = 'center',echo=FALSE, out.width= '60%', out.height= '40%'}
+forecast_AAN <- new_df_ts|>
+    model(ETS(Sales ~ error ("A") + trend("A") + season("N")))|>
+report() 
+```
+
+
+
+### Holt-Winters Exponential Smoothing
+
+```{r Holt winters, fig.align = 'center',echo=FALSE, out.width= '60%', out.height= '40%'}
+new_df_ts %>%
+  model(
+    decomposition_model(STL(Sales),
+                        ETS(season_adjust ~ error("A")+trend("A")+season("N")))
+  ) %>%
+report()
+```
+
+### Additive Damped Trend Exponential Smoothing
+
+```{r additive damp trend, fig.align = 'center', echo=FALSE, out.width= '80%', out.height= '80%'}
+new_df_ts %>%
+  model(
+    decomposition_model(STL(Sales),
+                        ETS(season_adjust ~ error("A")+trend("Ad")+season("N")))
+  ) %>%
+ report()
+```
+
+
+
+
+## Significance test
+
+
+
+## Residuals
+
+```{r residual of ETS, fig.cap='Residuals of Holt Multiplicative', out.height='40%', out.width='60%', echo=FALSE}
+Holt_df <- new_df_ts|>
+  model(ETS(Sales ~ error("A") +  trend("Ad") + season("N")))
+gg_tsresiduals(Holt_df)
+```
+
+We see a spike in the beginning of 2020 and before 2020 we see sales innovative residuals below -5000 and 5000 but after 2020 we started to see the changes where it was falling far below -5000 and in mid 2019 we saw it being far below -5000.
+
+
+
+## Forecasts
+We have splitted our dataset into 10 years (2010-01-01 to 2019-12-01) for training and 3 years for testing (2020-01-01 to 2022-12-01). We will use Holt Linear Method, Holt Multiplicative and ETS model to train and test our data. 
+```{r fore all, out.height='40%', out.width='80%', fig.cap=' Forecast for Holt linear, Holt multiplicative and ETS', echo=FALSE}
+forecast_ALL <- new_df_ts|>  
+  model(
+    "Holt Linear Method" = ETS(Sales ~ error("A") +  trend("Ad") + season("A")),
+    "Holt Multiplicative" = ETS(Sales ~ error("A") +  trend("Ad") + season("N")),
+    "ETS" = ETS(Sales))
+
+fc <- forecast_ALL %>% forecast(h = "3 years")
+fc %>%
+  autoplot(new_df_ts, level = NULL)
+
+```
+
+From figure .... Holt Linear Method and ETS have comparable forecast, while the Multiplicative model gives a linear forecast.
+
+
+
+# ARIMA
+Time series data can be used to gain insight into a dataset or to make predictions about the future with the help of a statistical analysis model called an autoregressive integrated moving average (ARIMA) [@ARIMA_autoregressive_2023]. If a statistical model makes predictions about the future by looking at the past, it is said to be autoregressive [@ARIMA_autoregressive_2023]. 
+
+
+
+
+
+## Stationarity
+A stationary time series is roughly horizontal, constant variance, no pattern predictable in long term. 
+
+```{r}
+dataw <- new_df_ts$Sales
+adf_res <- adf.test(dataw)
+adf_res
+```
+
+We are unable to reject the null hypothesis of stationary since $\text{Dicker-Fuller} = -0.77593$ is less than the critical values and the p-value = 0.9617 is more than the significance threshold. We have to do more analysis like doing the differencing. 
+
+## Transformation
+We can see this negative inverse relationship between the modified variable and its source data in fig. ..., where $\lambda = -0,9$. This indicates that the variable is declining and non-linear.
+
+
+## Difference
+The mean can be stabilised with the aid of differencing. The differenced series represents the shift that occurred between each individual observation and it is given by: 
+\begin{equation} 
+ y'_t = y_t - y_{t-1}
+  \label{eq:diff}
+\end{equation} 
+
+ 
+ 
+
+```{r Box Cox transformation differencing, out.width= '80%', out.height= '80%', fig.align = 'center', echo=FALSE}
+new_df_lam <- new_df_ts%>%
+  features(Sales, features = guerrero) %>%
+  pull(lambda_guerrero)
+new_df_ts%>%
+  features(box_cox(Sales, new_df_lam), unitroot_ndiffs)
+```
+
+This implies we have to perform 1 differencing and it suggest that there is a linear trend present in the data. 
+
+
+
+### Model
+```{r ARIMA plot,echo=FALSE, out.width= '100%', out.height= '100%'}
+new_df_ts|>
+ model(ARIMA(Sales)) |>
+  report(new_df_ts)
+
+```
+
+We notice from the ARIMA model that the series data is differenced to make it stationary. We also notice that the is no autoregressive component in the model. The moving average component of 1 is observed. The is a seasonal period of 12. the estimated standard deviation $\sigma^2 = 2143511$. There is $\text{log likelihood}=-1249.75$, $\text{AIC}=2505.51$ ,$\text{AICc}=2505.68$, $\text{BIC}=2514.4$. 
+
+
+
+
+```{r decomp x11, echo=FALSE, out.width= '100%', out.height= '100%'}
+x11_dcmp <- new_df_ts|>
+  model(x11 = X_13ARIMA_SEATS(Sales ~ x11()))
+components(x11_dcmp)
+```
+
+```{r decomposition x_11, fig.align = 'center', echo=FALSE, out.width= '100%', out.height= '100%', fig.cap='decomp new'}
+x11_dcmp <- new_df_ts|>
+  model(x11 = X_13ARIMA_SEATS(Sales ~ x11()))
+components(x11_dcmp)|>
+autoplot(Sales) + labs(title = "Decomposition of Grocery sales using x_11")
+```
+
+### ACF/PACF
+
+```{r ACF and PACF, fig.align = 'center', echo=FALSE, out.width= '100%', out.height= '100%', fig.cap='ACF and PACF'}
+gg_tsdisplay(new_df_ts, y = Sales, plot_type = 'partial')
+```
+The ACF shows that they are slowly decreasing and the PACF has some spikes at lag 12 and at lag 13 which shows a strong positive and a strong negative pattern respectively.
+
+### Residuals
+
+
+### Forecasts
+We have splitted our data from 2010 until 2019 for testing and from 2020 until 2022 for testing.
+```{r fff}
+new_fore <-new_df_ts|>
+  model(ARIMA(Sales))
+new_fore|>
+  forecast(h = "3 years")|>
+  autoplot(new_df_ts, level = NULL)
+```
+
+From this forecast we notice that the trend is still the same when comparing the original data and forecast. 
+
+
+
+
+
+# Comparison
+
+## Accuracy
+
+```{r accuracy for non linear model, fig.cap='RMSE for piecewise and exponential rehression models', out.height='100%', out.width='100%', echo=FALSE}
+accuracy(fit_trends)
+```
+
+
+```{r , echo=FALSE, fig.cap='RMSE for Holt linear, Holt Multiplicative, ETS models', out.height='100%', out.width='100%'}
+accuracy(forecast_ALL)
+```
+
+```{r accuracy 1, echo=FALSE, fig.cap='linear regression model', out.height='100%', out.width='100%'}
+accuracy(lin_mod)
+```
+
+```{r accuracy for ARIMA, echo=FALSE, fig.cap='RMSE for ARIMA model', out.height='100%', out.width='100%'}
+accuracy(new_fore)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+## Discussion
+We have evaluated 7 models, namely Holt linear, Holt multiplicative, ETS, TSLM, and ARIMA, Exponential, piecewise models. The valuation was based on ME, RMSE, MAE, MPE, MAE, MASE, RMSSE, ACF1 on training data. We discovered that ARIMA model has the lowest average magnitude of predictor error since it's $RMSE=1392.$, ETS has lowest average magnitude of absolute error since it's $MAE =714.$, ETS  model has lowest average percentage error of $MAPE =1.26$, Holt Linear Method has the lowest magnitude of scaled error of $MASE=0.312$, ETS has the lowest average scaled error of $RMSSE =0.379$, Holt linear method has the best fit to the autocorrelation structure of the date of $ACF1=0.00312$. 
+
+# Conclusion
+
+In order to make an accurate prediction, we used a variety of models, such as the Holt multiplicative, Holt linear, piecewise, ETS, ARIMA, TSLM, and Exponential models. The discussion suggests that the ETS model is preferable because of the monthly data format in which the sales prediction is provided. This is due to the fact that the ETS model has the smallest MAE, at a value of 714.  The MAE is a metric used to assess the typical disparity between forecasted and actual sales. If the MAE is smaller, then the ETS model is more accurate than competing models in making monthly sales forecasts.
+
+ 
+ 
+
+
+
+
+
+# References 
